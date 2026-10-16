@@ -13,7 +13,8 @@ Multiplayer-only Android app that is meant to run the user's own PSP Tekken 6 IS
 | Password login, DB persistence | NOT STARTED. State is in memory; guests only |
 | UDP gameplay transport, relay, rollback/delay sync | NOT STARTED |
 | MIPS integer interpreter + single-precision FPU (delay slots, unaligned ops) + plain-ELF loader | Implemented, tested on hand-assembled programs. No VFPU, no PRX relocation, no FPU exception flags, no timing |
-| Kernel HLE, GPU, audio, ad hoc net layer | NOT STARTED |
+| HLE kernel layer: NID derivation, syscall dispatch, core services (exit, display/vblank, controller, time, partition memory), thread scheduler (priorities, delay, sleep/wakeup), semaphores | Implemented, tested with hand-assembled programs. Placeholder error codes, bump allocator, rough virtual clock, no timeslicing between equal-priority threads. No callbacks, event flags, mutexes or module linker yet |
+| GPU, audio, ad hoc net layer | NOT STARTED |
 | Original Tekken 6 execution / online matches | NOT STARTED. Nothing here runs the game |
 | Deployed internet service | NO. Local only |
 

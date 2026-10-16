@@ -20,6 +20,9 @@ class MainActivity : Activity() {
     private val io = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
     private var token: String? = null
+    private var myId: String? = null
+    private var matchId: String? = null
+    private var opponentId: String? = null
     private lateinit var status: TextView
     private lateinit var url: EditText
     private lateinit var name: EditText
@@ -51,6 +54,11 @@ class MainActivity : Activity() {
         col.addView(btn("Ready") { post("/rooms/ready", JSONObject().put("ready", true)) })
         col.addView(btn("Not ready") { post("/rooms/ready", JSONObject().put("ready", false)) })
         col.addView(btn("Leave room") { post("/rooms/leave") })
+        col.addView(btn("Match loaded") { post("/matches/loaded") })
+        col.addView(btn("Report: I won") { report(myId) })
+        col.addView(btn("Report: opponent won") { report(opponentId) })
+        col.addView(btn("Report: draw") { report("draw") })
+        col.addView(btn("Match history") { call("GET", "/matches/history", null) { show(it) } })
         status = TextView(this).apply { text = "not connected"; setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE }
         col.addView(status)
         setContentView(ScrollView(this).apply { addView(col) })
@@ -63,14 +71,35 @@ class MainActivity : Activity() {
 
     private fun show(r: Pair<Int, String>) {
         if (r.first == 401) token = null
+        if (r.first == 200) {
+            try {
+                val room = JSONObject(r.second).optJSONObject("room")
+                matchId = room?.optString("matchId")?.takeIf { it.isNotEmpty() }
+                opponentId = null
+                val ps = room?.optJSONArray("players")
+                if (ps != null) for (i in 0 until ps.length()) {
+                    val id = ps.getJSONObject(i).getString("playerId")
+                    if (id != myId) opponentId = id
+                }
+            } catch (_: Exception) { /* not a state response */ }
+        }
         status.text = "HTTP ${r.first}\n${r.second}"
     }
 
     private fun connect() {
         call("POST", "/auth/guest", JSONObject().put("displayName", name.text.toString().trim()), auth = false) { r ->
-            if (r.first == 200) token = JSONObject(r.second).getString("token")
+            if (r.first == 200) {
+                val j = JSONObject(r.second)
+                token = j.getString("token"); myId = j.getString("playerId")
+            }
             show(r)
         }
+    }
+
+    private fun report(winner: String?) {
+        val m = matchId
+        if (m == null || winner == null) { status.text = "no active match or opponent yet"; return }
+        post("/matches/result", JSONObject().put("matchId", m).put("winnerId", winner))
     }
 
     private fun post(path: String, body: JSONObject? = JSONObject()) = call("POST", path, body) { show(it) }

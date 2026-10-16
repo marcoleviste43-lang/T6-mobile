@@ -96,10 +96,47 @@ static void testSyscallAndBad() {
   { Vm v;  uint32_t sc = 0x2025u << 6 | 0x0c;
     CHECK(v.go({sc, BREAK}) == Step::Syscall); CHECK(v.cpu.syscallCode == 0x2025 && v.cpu.pc == BASE + 4);
     CHECK(v.cpu.run(10) == Step::Break); }
-  { Vm v;  CHECK(v.go({0x44000000u /* COP1 */}) == Step::BadInstruction); CHECK(v.cpu.lastInstr == 0x44000000u); }
+  { Vm v;  CHECK(v.go({0x48000000u /* COP2: VFPU, unsupported */}) == Step::BadInstruction); CHECK(v.cpu.lastInstr == 0x48000000u); }
   { Vm v;  v.cpu.setPc(0x10); CHECK(v.cpu.step() == Step::MemFault); }  // fetch outside RAM
   { Vm v;  CHECK(v.go({0x08000000u | (BASE >> 2 & 0x3FFFFFF), NOP}, 50) == Step::Ok); }  // infinite loop hits budget
   std::puts("ok syscall/break, bad instruction, fetch fault, step budget");
+}
+
+static uint32_t C1(uint32_t fmt, uint32_t ft, uint32_t fs, uint32_t fd, uint32_t fn) { return 0x11u << 26 | fmt << 21 | ft << 16 | fs << 11 | fd << 6 | fn; }
+static uint32_t MTC1(int rt, int fs) { return R(4, rt, fs, 0, 0, 0x11); }
+static uint32_t MFC1(int rt, int fs) { return R(0, rt, fs, 0, 0, 0x11); }
+static uint32_t LI(int rt, int32_t x) { return ADDIU(rt, zero, x); }
+
+static void testFpu() {
+  { Vm v;  // 1.5 + 2.25 = 3.75, sqrt(2.25) = 1.5
+    CHECK(v.go({I(0x0f, 0, t0, 0x3FC0), I(0x0f, 0, t1, 0x4010), MTC1(t0, 1), MTC1(t1, 2),
+                C1(16, 2, 1, 3, 0x00), MFC1(t2, 3), C1(16, 0, 2, 4, 0x04), MFC1(t3, 4), BREAK}) == Step::Break);
+    CHECK(v.cpu.r[t2] == 0x40700000u && v.cpu.r[t3] == 0x3FC00000u); }
+  { Vm v;  // 25/10 = 2.5 ; rounding family for +2.5 and -2.5
+    CHECK(v.go({LI(t0, 25), LI(t1, 10), MTC1(t0, 1), MTC1(t1, 2), C1(20, 0, 1, 1, 0x20), C1(20, 0, 2, 2, 0x20), C1(16, 2, 1, 3, 0x03),
+                C1(16, 0, 3, 4, 0x0c), C1(16, 0, 3, 5, 0x0e), C1(16, 0, 3, 6, 0x0f), C1(16, 0, 3, 7, 0x0d), C1(16, 0, 3, 8, 0x07),
+                C1(16, 0, 8, 9, 0x0c), C1(16, 0, 8, 10, 0x0e), C1(16, 0, 8, 11, 0x0f),
+                MFC1(t0, 4), MFC1(t1, 5), MFC1(t2, 6), MFC1(t3, 7), MFC1(t4, 9), BREAK}) == Step::Break);
+    CHECK((int32_t)v.cpu.r[t0] == 2 && (int32_t)v.cpu.r[t1] == 3 && (int32_t)v.cpu.r[t2] == 2 && (int32_t)v.cpu.r[t3] == 2);
+    CHECK((int32_t)v.cpu.r[t4] == -2);  // round(-2.5) = -2 (nearest-even)
+    CHECK((int32_t)v.cpu.fpr[10] == -2 && (int32_t)v.cpu.fpr[11] == -3); }
+  { Vm v;  // cvt.w.s honours fcr31 rounding mode: 3.5 -> 4 (nearest-even), then 3 after ctc1 mode=1
+    CHECK(v.go({LI(t0, 7), LI(t1, 2), MTC1(t0, 1), MTC1(t1, 2), C1(20, 0, 1, 1, 0x20), C1(20, 0, 2, 2, 0x20), C1(16, 2, 1, 3, 0x03),
+                C1(16, 0, 3, 4, 0x24), LI(t2, 1), R(6, t2, 31, 0, 0, 0x11), C1(16, 0, 3, 5, 0x24), MFC1(t3, 4), MFC1(t4, 5), BREAK}) == Step::Break);
+    CHECK(v.cpu.r[t3] == 4 && v.cpu.r[t4] == 3); }
+  { Vm v;  // compare + bc1t (delay slot executes, target skips)
+    CHECK(v.go({I(0x0f, 0, t0, 0x3FC0), I(0x0f, 0, t1, 0x4010), MTC1(t0, 1), MTC1(t1, 2), C1(16, 2, 1, 0, 0x34),
+                I(0x11, 8, 1, 2), LI(t3, 1), LI(t4, 2), BREAK}) == Step::Break);
+    CHECK(v.cpu.r[t3] == 1 && v.cpu.r[t4] == 0); }
+  { Vm v;  // c.eq false -> bc1f taken; c.un with NaN true
+    CHECK(v.go({I(0x0f, 0, t0, 0x3FC0), I(0x0f, 0, t1, 0x4010), MTC1(t0, 1), MTC1(t1, 2), C1(16, 2, 1, 0, 0x32),
+                I(0x11, 8, 0, 2), LI(t3, 1), LI(t4, 2), I(0x0f, 0, t2, 0x7FC0), MTC1(t2, 3), C1(16, 3, 3, 0, 0x31), R(2, t0, 31, 0, 0, 0x11), BREAK}) == Step::Break);
+    CHECK(v.cpu.r[t3] == 1 && v.cpu.r[t4] == 0); CHECK((v.cpu.r[t0] >> 23) & 1); }
+  { Vm v;  // lwc1/swc1 round trip, cvt.s.w(-3) = -3.0
+    CHECK(v.go({I(0x0f, 0, t0, 0x0800), I(0x0d, t0, t0, 0x1000), LI(t1, -3), MTC1(t1, 1), C1(20, 0, 1, 1, 0x20), I(0x39, t0, 1, 0), I(0x23, t0, t2, 0), I(0x31, t0, 5, 0), C1(16, 0, 5, 6, 0x05), MFC1(t3, 6), BREAK}) == Step::Break);
+    CHECK(v.cpu.r[t2] == 0xC0400000u && v.cpu.r[t3] == 0x40400000u); }
+  { Vm v;  CHECK(v.go({C1(17, 0, 0, 0, 0x00)}) == Step::BadInstruction); }  // double precision unsupported
+  std::puts("ok FPU arithmetic, rounding modes, compare/branch, lwc1/swc1, unsupported fmt rejected");
 }
 
 static void put16(std::vector<uint8_t>& v, size_t o, uint16_t x) { v[o] = x; v[o + 1] = x >> 8; }
@@ -130,4 +167,4 @@ static void testElf() {
   std::puts("ok ELF load + malformed ELF rejection");
 }
 
-int main() { testLoopAndDelaySlots(); testMemory(); testAlu(); testSyscallAndBad(); testElf(); std::puts("ALL CPU/ELF TESTS PASSED"); return 0; }
+int main() { testLoopAndDelaySlots(); testMemory(); testAlu(); testSyscallAndBad(); testFpu(); testElf(); std::puts("ALL CPU/ELF TESTS PASSED"); return 0; }

@@ -1,8 +1,24 @@
 #include "mips.h"
+#include <cmath>
+#include <cstring>
 
 namespace t6 {
 namespace {
 inline uint32_t maskOf(uint32_t size) { return size >= 32 ? 0xFFFFFFFFu : ((1u << size) - 1); }
+// mode: 0 nearest-even, 1 toward zero, 2 toward +inf, 3 toward -inf. Out-of-range/NaN saturation is an assumption.
+uint32_t toWord(float x, uint32_t mode) {
+  if (std::isnan(x)) return 0x7FFFFFFFu;
+  double d = x;
+  switch (mode & 3) {
+    case 0: d = std::nearbyint(d); break;
+    case 1: d = std::trunc(d); break;
+    case 2: d = std::ceil(d); break;
+    default: d = std::floor(d); break;
+  }
+  if (d >= 2147483648.0) return 0x7FFFFFFFu;
+  if (d < -2147483648.0) return 0x80000000u;
+  return (uint32_t)(int32_t)d;
+}
 inline uint32_t bswap32(uint32_t x) { return (x >> 24) | ((x >> 8) & 0xFF00) | ((x << 8) & 0xFF0000) | (x << 24); }
 }  // namespace
 
@@ -154,6 +170,62 @@ Step Cpu::step() {
       break;
     }
     case 0x38: { uint32_t ea = a + simm; if ((ea & 3) || !mem->write32(ea, b)) return fault(ea); r[rt] = 1; break; }  // sc (single core: always succeeds)
+    case 0x11: {  // COP1 (single precision only)
+      const uint32_t fs = rd, ft = rt, fd = sa;
+      auto F = [&](uint32_t i) { float x; std::memcpy(&x, &fpr[i], 4); return x; };
+      auto SF = [&](uint32_t i, float x) { std::memcpy(&fpr[i], &x, 4); };
+      switch (rs) {
+        case 0x00: r[rt] = fpr[fs]; break;                      // mfc1
+        case 0x02: r[rt] = (rd == 31) ? fcr31 : 0; break;       // cfc1
+        case 0x04: fpr[fs] = b; break;                          // mtc1
+        case 0x06: if (rd == 31) fcr31 = b & 0x01FFFFFFu; break;  // ctc1
+        case 0x08: {                                            // bc1f/t/fl/tl
+          bool c = (fcr31 >> 23) & 1;
+          switch (rt) {
+            case 0: branch(!c, false); break;
+            case 1: branch(c, false); break;
+            case 2: branch(!c, true); break;
+            case 3: branch(c, true); break;
+            default: return bad();
+          }
+          break;
+        }
+        case 0x10: {  // fmt S
+          float x = F(fs), y = F(ft);
+          if (fn >= 0x30) {  // c.cond.s
+            bool un = std::isnan(x) || std::isnan(y);
+            bool res = ((fn & 4) && x < y) || ((fn & 2) && x == y) || ((fn & 1) && un);
+            fcr31 = res ? (fcr31 | (1u << 23)) : (fcr31 & ~(1u << 23));
+            break;
+          }
+          switch (fn) {
+            case 0x00: SF(fd, x + y); break;
+            case 0x01: SF(fd, x - y); break;
+            case 0x02: SF(fd, x * y); break;
+            case 0x03: SF(fd, x / y); break;
+            case 0x04: SF(fd, std::sqrt(x)); break;
+            case 0x05: fpr[fd] = fpr[fs] & 0x7FFFFFFFu; break;
+            case 0x06: fpr[fd] = fpr[fs]; break;
+            case 0x07: fpr[fd] = fpr[fs] ^ 0x80000000u; break;
+            case 0x0c: fpr[fd] = toWord(x, 0); break;
+            case 0x0d: fpr[fd] = toWord(x, 1); break;
+            case 0x0e: fpr[fd] = toWord(x, 2); break;
+            case 0x0f: fpr[fd] = toWord(x, 3); break;
+            case 0x24: fpr[fd] = toWord(x, fcr31 & 3); break;  // cvt.w.s
+            default: return bad();
+          }
+          break;
+        }
+        case 0x14:  // fmt W
+          if (fn == 0x20) SF(fd, (float)(int32_t)fpr[fs]);  // cvt.s.w
+          else return bad();
+          break;
+        default: return bad();  // includes fmt D (no double precision on Allegrex)
+      }
+      break;
+    }
+    case 0x31: { uint32_t v, ea = a + simm; if ((ea & 3) || !mem->read32(ea, v)) return fault(ea); fpr[rt] = v; break; }   // lwc1
+    case 0x39: { uint32_t ea = a + simm; if ((ea & 3) || !mem->write32(ea, fpr[rt])) return fault(ea); break; }          // swc1
     case 0x2f: case 0x33: break;  // cache, pref
     default: return bad();
   }

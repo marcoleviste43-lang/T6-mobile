@@ -12,7 +12,7 @@ Multiplayer-only Android app that is meant to run the user's own PSP Tekken 6 IS
 | Real-time lobby push (WebSocket) | NOT STARTED. Clients poll `GET /api/v1/state` |
 | Password login, DB persistence | NOT STARTED. State is in memory; guests only |
 | UDP gameplay transport, relay, rollback/delay sync | NOT STARTED |
-| MIPS integer interpreter (Allegrex subset, delay slots, unaligned ops) + plain-ELF loader | Implemented, tested on hand-assembled programs. No FPU/VFPU, no PRX relocation, no timing |
+| MIPS integer interpreter + single-precision FPU (delay slots, unaligned ops) + plain-ELF loader | Implemented, tested on hand-assembled programs. No VFPU, no PRX relocation, no FPU exception flags, no timing |
 | Kernel HLE, GPU, audio, ad hoc net layer | NOT STARTED |
 | Original Tekken 6 execution / online matches | NOT STARTED. Nothing here runs the game |
 | Deployed internet service | NO. Local only |

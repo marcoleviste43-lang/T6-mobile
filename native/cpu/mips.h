@@ -1,4 +1,6 @@
-// MIPS32 (Allegrex integer subset) interpreter. No FPU/VFPU yet: those opcodes return BadInstruction.
+// MIPS32 (Allegrex) interpreter: integer core + single-precision FPU. No VFPU yet (BadInstruction).
+// FPU limits: no exception flags, no flush-to-zero modelling, NaN/overflow conversion results are
+// unverified against real hardware.
 #pragma once
 #include "../memory/memory.h"
 
@@ -10,6 +12,8 @@ struct Cpu {
   uint32_t r[32] = {};
   uint32_t pc = 0, npc = 4;  // npc models the branch delay slot
   uint32_t hi = 0, lo = 0;
+  uint32_t fpr[32] = {};     // FPU registers as raw single-precision bit patterns
+  uint32_t fcr31 = 0;        // FPU control/status: bits 1:0 rounding mode, bit 23 condition
   uint32_t syscallCode = 0;  // valid after Step::Syscall / Step::Break
   uint32_t faultAddr = 0;    // valid after Step::MemFault
   uint32_t lastInstr = 0;    // valid after Step::BadInstruction

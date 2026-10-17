@@ -31,4 +31,4 @@ It prints a `https://something.trycloudflare.com` address. Put that in both phon
 - Guest-only login, no passwords, no database. Anyone who finds the URL can create guest sessions (rate-limited and capped).
 - The server is not authoritative about who won; see the README. A colluding pair can fake ranked results.
 - Traffic is as private as the URL scheme: use https (Render and the tunnel both provide it). Plain `http://` to a public host sends tokens in the clear.
-- The app still polls once every 1.5 seconds; WebSocket push is not built yet.
+- The app now long-polls the state (up to 8 seconds per request), so lobby changes arrive quickly and idle traffic is low. WebSocket push is not built.

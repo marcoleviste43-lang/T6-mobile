@@ -29,10 +29,17 @@ class MainActivity : Activity() {
     private lateinit var name: EditText
     private lateinit var code: EditText
 
+    // Long poll on its own thread, so a waiting request never blocks button presses on `io`.
+    private val pollIo = Executors.newSingleThreadExecutor()
+    private var stateVersion = ""
     private val poller = object : Runnable {
         override fun run() {
-            if (token != null) call("GET", "/state", null) { show(it) }
-            ui.postDelayed(this, 1500)
+            if (token == null) { ui.postDelayed(this, 1500); return }
+            call("GET", "/state?since=$stateVersion&wait=8", null, exec = pollIo, readMs = 15000) { r ->
+                if (r.first == 200) try { stateVersion = JSONObject(r.second).optString("version", "") } catch (_: Exception) { }
+                show(r)
+                ui.postDelayed(this, if (r.first == 200) 50L else 1500L)  // changed or timed out: ask again at once; on errors, back off
+            }
         }
     }
 
@@ -68,7 +75,7 @@ class MainActivity : Activity() {
 
     override fun onPause() { prefs.edit().putString("url", url.text.toString().trim()).apply(); super.onPause() }
 
-    override fun onDestroy() { ui.removeCallbacks(poller); io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { ui.removeCallbacks(poller); io.shutdown(); pollIo.shutdown(); super.onDestroy() }
 
     private fun btn(label: String, onClick: () -> Unit) = Button(this).apply { text = label; setOnClickListener { onClick() } }
 
@@ -107,13 +114,14 @@ class MainActivity : Activity() {
 
     private fun post(path: String, body: JSONObject? = JSONObject()) = call("POST", path, body) { show(it) }
 
-    private fun call(method: String, path: String, body: JSONObject?, auth: Boolean = true, cb: (Pair<Int, String>) -> Unit) {
+    private fun call(method: String, path: String, body: JSONObject?, auth: Boolean = true,
+                     exec: java.util.concurrent.ExecutorService = io, readMs: Int = 4000, cb: (Pair<Int, String>) -> Unit) {
         val base = url.text.toString().trim().trimEnd('/')
         val tok = token
-        io.execute {
+        exec.execute {
             val result = try {
                 val c = URL("$base/api/v1$path").openConnection() as HttpURLConnection
-                c.requestMethod = method; c.connectTimeout = 4000; c.readTimeout = 4000
+                c.requestMethod = method; c.connectTimeout = 4000; c.readTimeout = readMs
                 if (auth && tok != null) c.setRequestProperty("Authorization", "Bearer $tok")
                 if (method == "POST") {
                     c.doOutput = true; c.setRequestProperty("Content-Type", "application/json")

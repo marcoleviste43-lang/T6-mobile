@@ -85,3 +85,40 @@ test("server_full cap and match history cap keep memory bounded", () => {
   }
   assert.equal(svc.matches.length, 3);
 });
+
+test("state long poll: immediate on mismatch, wakes on change, times out unchanged, keeps a waiting player connected", async () => {
+  const svc = new Service({ sessionTtlMs: 3_600_000, queueTimeoutMs: 120_000, readyTimeoutMs: 30_000, disconnectMs: 500, k: 32 });
+  const sweeper = setInterval(() => svc.sweep(Date.now()), 100);
+  const srv = createApp(svc);
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  try {
+    const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/api/v1`;
+    const call = async (m: string, path: string, token?: string, body?: unknown) => {
+      const r = await fetch(base + path, { method: m, headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+      return (await r.json()) as any;
+    };
+    const a = await call("POST", "/auth/guest", undefined, { displayName: "alice" });
+    const b = await call("POST", "/auth/guest", undefined, { displayName: "bobby" });
+    const first = await call("GET", "/state", a.token);
+    assert.equal(first.state, "IDLE"); assert.match(first.version, /^[0-9a-f]{12}$/);
+    let t0 = Date.now();
+    assert.equal((await call("GET", `/state?since=nope&wait=5000`, a.token)).version, first.version);  // mismatch returns at once
+    assert.ok(Date.now() - t0 < 1000);
+
+    const room = (await call("POST", "/rooms", a.token, {})).room;
+    const joined = await call("GET", "/state", a.token);
+    t0 = Date.now();
+    const waiting = call("GET", `/state?since=${joined.version}&wait=5000`, a.token);  // nothing has changed yet
+    setTimeout(() => { call("POST", "/rooms/join", b.token, { code: room.code }); }, 600);
+    const woke = await waiting;
+    assert.ok(Date.now() - t0 >= 500 && Date.now() - t0 < 3000);  // woke because bobby joined, not by the timeout
+    assert.equal(woke.room.players.length, 2); assert.notEqual(woke.version, joined.version);
+
+    await call("POST", "/rooms/leave", b.token, {});  // bobby is not polling, so remove him explicitly
+    const alone = await call("GET", "/state", a.token);
+    assert.equal(alone.room.players.length, 1);
+    t0 = Date.now();  // unchanged state: times out with the same version, and alice is NOT forfeited although disconnectMs is 500
+    const quiet = await call("GET", `/state?since=${alone.version}&wait=1500`, a.token);
+    assert.ok(Date.now() - t0 >= 1400); assert.equal(quiet.version, alone.version); assert.equal(quiet.state, "ROOM_JOINED");
+  } finally { clearInterval(sweeper); srv.close(); }
+});

@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createHash } from "node:crypto";
 import { ApiError, Service } from "./service.ts";
 
 export class RateLimiter {
@@ -12,6 +13,8 @@ export class RateLimiter {
     this.b.set(key, e); return ok;
   }
 }
+
+const stateVersion = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 12);
 
 const MAX_BODY = 4096;
 function readBody(req: http.IncomingMessage): Promise<any> {
@@ -43,6 +46,7 @@ export function createApp(svc: Service, opts: { now?: () => number; rateCapacity
   const limiter = new RateLimiter(opts.rateCapacity ?? 30, opts.ratePerSec ?? 10);
   return http.createServer(async (req, res) => {
     const send = (status: number, body: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
     try {
       const t = now();
       if (!limiter.allow(clientKey(req.socket.remoteAddress, req.headers["x-forwarded-for"], opts.trustProxyHops ?? 0), t)) throw new ApiError(429, "rate_limited", "too many requests");
@@ -52,11 +56,26 @@ export function createApp(svc: Service, opts: { now?: () => number; rateCapacity
       const body = req.method === "POST" ? await readBody(req) : {};
       if (route === "POST /api/v1/auth/guest") return send(200, svc.guest(body.displayName, t));
       const auth = req.headers.authorization;
-      const p = svc.authenticate(auth?.startsWith("Bearer ") ? auth.slice(7) : undefined, t);
+      const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
+      const p = svc.authenticate(token, t);
       switch (route) {
         case "POST /api/v1/auth/logout": svc.logout(p, t); return send(200, { ok: true });
         case "GET /api/v1/profile": return send(200, svc.profile(p));
-        case "GET /api/v1/state": return send(200, svc.stateOf(p));
+        case "GET /api/v1/state": {
+          // Long poll: ?since=<version>&wait=<ms, max 10000>. Returns at once if the state differs from `since`,
+          // otherwise waits up to `wait` ms for a change. Re-authenticating each tick keeps the player marked as
+          // connected, so a waiting client is not forfeited by the disconnect timer.
+          const since = url.searchParams.get("since") ?? "";
+          const waitMs = Math.min(10_000, Math.max(0, Number(url.searchParams.get("wait") ?? 0) || 0));
+          const started = Date.now();
+          let cur = p, view = svc.stateOf(cur), version = stateVersion(view);
+          while (since !== "" && version === since && Date.now() - started < waitMs && !req.socket.destroyed) {
+            await sleep(200);
+            cur = svc.authenticate(token, now());
+            view = svc.stateOf(cur); version = stateVersion(view);
+          }
+          return send(200, { ...view, version });
+        }
         case "POST /api/v1/matchmaking/join": return send(200, svc.joinQueue(p, body.mode, t));
         case "POST /api/v1/matchmaking/cancel": svc.cancelQueue(p); return send(200, svc.stateOf(p));
         case "POST /api/v1/rooms": return send(200, svc.createRoom(p, t));

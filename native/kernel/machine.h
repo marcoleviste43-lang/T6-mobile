@@ -39,16 +39,20 @@ struct RunResult {
 struct Ctx {
   uint32_t r[32] = {}, pc = 0, npc = 4, hi = 0, lo = 0, fpr[32] = {}, fcr31 = 0;
 };
-enum class TState { Dormant, Ready, Running, WaitDelay, WaitSema, Sleeping, Dead };
+enum class TState { Dormant, Ready, Running, WaitDelay, WaitSema, WaitEvent, WaitMutex, Sleeping, Dead };
 struct Thread {
   uint32_t id = 0; std::string name; int prio = 0x20; TState state = TState::Dormant;
   Ctx ctx; uint64_t seq = 0;
   bool timed = false; uint64_t wakeAt = 0;
   uint32_t semaId = 0, semaNeed = 0, wakeups = 0, exitStatus = 0;
+  uint32_t evId = 0, evBits = 0, evMode = 0, evOutPtr = 0;  // event flag wait
+  uint32_t mutexId = 0, mutexNeed = 0;                        // mutex wait
   uint32_t entry = 0, stackTop = 0, stackSize = 0;
   bool deleted = false;
 };
 struct Sema { int32_t count = 0, maxCount = 0; std::vector<uint32_t> waiters; bool live = true; };
+struct EventFlag { uint32_t pattern = 0; std::vector<uint32_t> waiters; bool live = true; };
+struct Mutex { uint32_t owner = 0, count = 0, attr = 0; std::vector<uint32_t> waiters; bool live = true; };
 
 struct Machine {
   Memory mem;
@@ -75,6 +79,8 @@ struct Machine {
   // --- threads (single host thread, cooperative switch points at syscalls, priority: lower number runs first) ---
   std::deque<Thread> threads;   // id = index + 1
   std::vector<Sema> semas;      // id = index + 1
+  std::vector<EventFlag> flags; // id = index + 1
+  std::vector<Mutex> mutexes;   // id = index + 1
   uint32_t curId = 0;           // 0 = no thread model active (raw CPU mode)
   uint32_t exitStub = 0;        // guest address: move a0,v0 ; syscall sceKernelExitThread
   uint64_t seqCounter = 0;
@@ -96,5 +102,6 @@ public:
 
 void registerCoreServices(Hle& hle);
 void registerThreadServices(Hle& hle);
+void registerSyncServices(Hle& hle);
 
 }  // namespace t6

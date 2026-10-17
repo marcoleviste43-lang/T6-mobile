@@ -29,7 +29,7 @@ HleResult Hle::dispatch(Machine& m, uint32_t code) {
   return m.exited ? HleResult::Exit : HleResult::Handled;
 }
 
-Machine::Machine() { registerCoreServices(hle); registerThreadServices(hle); }
+Machine::Machine() { registerCoreServices(hle); registerThreadServices(hle); registerSyncServices(hle); }
 
 void Machine::setHeap(uint32_t lowStart, uint32_t highEnd) {
   heapLow = lowStart; heapHigh = highEnd;
@@ -93,8 +93,10 @@ bool Machine::ensureCurrent(RunResult& out) {
     for (Thread& t : threads) {
       if (t.deleted || !t.timed || now < t.wakeAt) continue;
       if (t.state == TState::WaitDelay) { t.timed = false; wakeWithResult(t, 0); }
-      else if (t.state == TState::WaitSema) {  // semaphore wait timed out
-        auto& w = semas[t.semaId - 1].waiters;
+      else if (t.state == TState::WaitSema || t.state == TState::WaitEvent || t.state == TState::WaitMutex) {  // wait timed out
+        std::vector<uint32_t>& w = t.state == TState::WaitSema ? semas[t.semaId - 1].waiters
+                                 : t.state == TState::WaitEvent ? flags[t.evId - 1].waiters
+                                                                : mutexes[t.mutexId - 1].waiters;
         for (size_t i = 0; i < w.size(); i++) if (w[i] == t.id) { w.erase(w.begin() + i); break; }
         t.timed = false; wakeWithResult(t, 0x80000001u);  // placeholder timeout code
       }

@@ -10,8 +10,19 @@ android {
         applicationId = "com.tekken6.online"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0-prototype"
+        // CI run number keeps versionCode rising on every build, so updates install over older builds.
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1) + 100
+        versionName = "0.2.0-prototype"
+    }
+    // One fixed debug key, committed on purpose (public "android" passwords, prototype only). Without it every
+    // CI build is signed with a fresh random key and Android reports a package conflict when you update.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

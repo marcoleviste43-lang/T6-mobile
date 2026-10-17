@@ -227,6 +227,11 @@ Step Cpu::step() {
     case 0x31: { uint32_t v, ea = a + simm; if ((ea & 3) || !mem->read32(ea, v)) return fault(ea); fpr[rt] = v; break; }   // lwc1
     case 0x39: { uint32_t ea = a + simm; if ((ea & 3) || !mem->write32(ea, fpr[rt])) return fault(ea); break; }          // swc1
     case 0x2f: case 0x33: break;  // cache, pref
+    case 0x12: case 0x18: case 0x19: case 0x32: case 0x34: case 0x36: case 0x37: case 0x3a: case 0x3e: case 0x3f: {  // VFPU family
+      Step vs = vfpu(ins);
+      if (vs != Step::Ok) return vs;
+      break;
+    }
     default: return bad();
   }
   commit();

@@ -11,6 +11,8 @@ type RoomState = "WAITING" | "LOADING" | "IN_MATCH" | "FINISHED";
 
 export interface Config {
   sessionTtlMs: number; queueTimeoutMs: number; readyTimeoutMs: number; disconnectMs: number; k: number;
+  maxPlayers?: number;  // cap on live guest sessions (default 5000); keeps a public server's memory bounded
+  maxMatches?: number;  // cap on stored match records (default 5000); oldest are dropped
 }
 export const defaultConfig: Config = {
   sessionTtlMs: 3_600_000, queueTimeoutMs: 120_000, readyTimeoutMs: 30_000, disconnectMs: 15_000, k: 32,
@@ -45,6 +47,7 @@ export class Service {
 
   guest(name: unknown, now: number) {
     if (typeof name !== "string" || !NAME_RE.test(name)) throw new ApiError(400, "invalid_name", "displayName must be 3-20 chars of letters, digits, space, _ or -");
+    if (this.players.size >= (this.cfg.maxPlayers ?? 5000)) throw new ApiError(503, "server_full", "server is full, try again later");
     const token = randomBytes(32).toString("base64url");
     const p: Player = { id: randomUUID(), name, rating: 1000, wins: 0, losses: 0, tokenHash: hash(token), expiresAt: now + this.cfg.sessionTtlMs, lastSeen: now };
     this.players.set(p.id, p); this.byToken.set(p.tokenHash, p.id);
@@ -212,6 +215,8 @@ export class Service {
       }
     }
     this.matches.push(rec);
+    const cap = this.cfg.maxMatches ?? 5000;
+    if (this.matches.length > cap) this.matches.splice(0, this.matches.length - cap);
   }
 
   history(p: Player) { return this.matches.filter((m) => m.players.includes(p.id)).slice(-50).reverse(); }

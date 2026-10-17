@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: t6-server
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: TRUST_PROXY_HOPS
+        value: "1"

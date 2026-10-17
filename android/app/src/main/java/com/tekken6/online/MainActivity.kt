@@ -23,6 +23,7 @@ class MainActivity : Activity() {
     private var myId: String? = null
     private var matchId: String? = null
     private var opponentId: String? = null
+    private val prefs by lazy { getSharedPreferences("t6", MODE_PRIVATE) }
     private lateinit var status: TextView
     private lateinit var url: EditText
     private lateinit var name: EditText
@@ -39,7 +40,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 32) }
         col.addView(TextView(this).apply { text = "TEKKEN 6 NATIVE ONLINE\nlobby prototype (no game runtime yet)"; textSize = 18f })
-        url = EditText(this).apply { setText("http://10.0.2.2:8080"); hint = "server URL"; inputType = InputType.TYPE_TEXT_VARIATION_URI }
+        url = EditText(this).apply { setText(prefs.getString("url", "http://127.0.0.1:8080")); hint = "server URL"; inputType = InputType.TYPE_TEXT_VARIATION_URI }
         name = EditText(this).apply { setText("player" + (100..999).random()); hint = "display name (3-20 chars)" }
         code = EditText(this).apply { hint = "room code"; inputType = InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS }
         col.addView(url); col.addView(name)
@@ -64,6 +65,8 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { addView(col) })
         ui.postDelayed(poller, 1500)
     }
+
+    override fun onPause() { prefs.edit().putString("url", url.text.toString().trim()).apply(); super.onPause() }
 
     override fun onDestroy() { ui.removeCallbacks(poller); io.shutdown(); super.onDestroy() }
 

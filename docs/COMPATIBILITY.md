@@ -27,3 +27,10 @@ Evidence level: none yet from a real ISO.
 ## Android signing
 - The debug APK is signed with a committed key (`android/app/debug.keystore`, public passwords, prototype only). Do not replace or regenerate this file, or updates will conflict again.
 - `versionCode` is the CI run number plus 100, so every CI build can install over the previous one.
+
+## VFPU (partial, unverified)
+- Written from memory of public emulator documentation; never checked against a real PSP or a real game binary. The tests only prove that the interpreter agrees with the test encoders, which use the same memory.
+- Implemented: lv.s, sv.s, lv.q, sv.q, mtv/mfv (vector registers only), vadd, vsub, vdiv, vmul, vdot, vhdp, vscl, vmov, vabs, vneg, vsat0, vsat1, vzero, vone, vrcp, vrsq, vsqrt, vsin, vcos, the three prefixes, viim, vnop/vsync/vflush.
+- Not implemented, reported as BadInstruction with the instruction word: all matrix ops (vmmul, vtfm*, vhtfm*), compares and conditional ops, vfim, vcst, int/float conversions, vmin/vmax, vrot, vcrs, vdet, vsbn, vidt, vexp2, vlog2, control registers, lvl.q/lvr.q.
+- Register file: 128 floats, index = matrix*4 + column + row*32. Vector names map onto it as column or row vectors by the transpose bit.
+- Assumptions to verify first against a real binary: prefixes are consumed only by vector arithmetic (not by loads, stores, mfv, mtv, viim); a source swizzle selecting a lane beyond the operand size is rejected; destination saturation mode 2 is rejected; sin/cos are exact at whole quarter turns and use double-precision math elsewhere, so low bits may differ from hardware; NaN and infinity behavior is whatever the host float does.

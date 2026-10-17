@@ -27,14 +27,25 @@ function readBody(req: http.IncomingMessage): Promise<any> {
   });
 }
 
-export function createApp(svc: Service, opts: { now?: () => number; rateCapacity?: number; ratePerSec?: number } = {}) {
+// Rate-limit key. Behind a reverse proxy every request arrives from the proxy's address, so with
+// trustProxyHops = N the client is the Nth entry from the RIGHT of X-Forwarded-For (the part our own
+// proxies appended; anything further left can be forged by the client). 0 = ignore the header.
+export function clientKey(remote: string | undefined, xff: string | string[] | undefined, hops: number): string {
+  if (hops > 0 && xff) {
+    const parts = (Array.isArray(xff) ? xff.join(",") : xff).split(",").map((x) => x.trim()).filter(Boolean);
+    if (parts.length >= hops) return parts[parts.length - hops];
+  }
+  return remote ?? "?";
+}
+
+export function createApp(svc: Service, opts: { now?: () => number; rateCapacity?: number; ratePerSec?: number; trustProxyHops?: number } = {}) {
   const now = opts.now ?? Date.now;
   const limiter = new RateLimiter(opts.rateCapacity ?? 30, opts.ratePerSec ?? 10);
   return http.createServer(async (req, res) => {
     const send = (status: number, body: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     try {
       const t = now();
-      if (!limiter.allow(req.socket.remoteAddress ?? "?", t)) throw new ApiError(429, "rate_limited", "too many requests");
+      if (!limiter.allow(clientKey(req.socket.remoteAddress, req.headers["x-forwarded-for"], opts.trustProxyHops ?? 0), t)) throw new ApiError(429, "rate_limited", "too many requests");
       const url = new URL(req.url ?? "/", "http://x");
       const route = `${req.method} ${url.pathname}`;
       if (route === "GET /api/v1/health") return send(200, { status: "ok", players: svc.players.size, rooms: svc.rooms.size });
